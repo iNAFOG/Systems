@@ -76,4 +76,64 @@ def get_gpu_numa_node(device:int):
         _, node = get_numa_cpus_and_memory()
         return NotADirectoryError
 
-#
+#Each gpu in a system is connected to a socket we pass the gpu number in this fxn and gets the pci_bus_id in the pci variable
+#we obtain the pci bus id for that particular gpu and try to open the numa_node file in the system files to read its preferred numa node for being 100% sure
+#but if the the file is not found (beacause of any reason lets say you are working on a limited access system then we choose the preferred node from numactl --show)
+
+
+def set_numa_affinity(node: int):
+    """Bind current process to CPUs and memory of the given NUMA node.""" 
+# CPU affinity 
+    cpus, _ = get_numa_cpus_and_memory()
+    psutil.Process(os.getpid()).cpu_affinity(cpus)
+# Memory affinity
+    _libnuma.numa_run_on_node(node)
+    _libnuma.numa_set_preferred(node)
+    print(f"PID={os.getpid()} bound to NUMA node {node} (CPUs={cpus})")
+
+
+#if you have been the following the flow of this whole script you will get that this is the whole binding part of the script
+#we force the processor to run on the cpus list we provide
+#and same is done for the memory
+
+def worker_init_fn(worker_id: int):
+    """Initialize DataLoader workers with NUMA bindings."""
+
+    gpu_node = get_gpu_numa_node(torch.cuda.current_device())
+    set_numa_affinity(gpu_node)
+    print(f"Worker {worker_id} (PID={os.getpid()}) bound to NUMA node {gpu_node}")
+#This is pretty self-explanatory
+
+
+def main():
+    dist.init_process_group(backend="nccl", init_method="env://")
+    #Initialises NCCL backend - i need to read more about it what is that- :( but apparently its recommended for multi-GPU training
+
+    device = torch.cuda.current_device()
+    gpu_node = get_gpu_numa_node(device)
+    set_numa_affinity(gpu_node)
+    #calling those fxns we made earlier
+    dataset = MyDataset(...) #Example Dataset
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=32,
+        num_workers=4,
+        pin_memory=True,
+        worker_init_fn=worker_init_fn
+    )
+
+    # Build and wrap model
+    model = torch.nn.Linear(224*224*3, 10).to("cuda")
+    ddp_model = DDP(model, device_ids=[device])
+
+#A little knowledge on multi gpu training for people who dont know - Lets say we have 4 GPU in out multi gpu setup and intially we set up batch size 32 and 100,000 sample in data
+#So total size of batch or total sample per each batch is  = 100000/32 = 3125
+#but since we have 4 gpu each gpu will get 1/4 of so =~ 781
+#and we just take avg of computed gradient so it works out after every pass.
+
+
+#IT took me a lil bit time to finish this, point out any issue you can find in this or in my explanation - this code doesn't belong to be I wrote it from a book but the explanation is mine.
+
+
+######End######  >w< :)
