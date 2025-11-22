@@ -43,3 +43,37 @@ def parse_physical_cpu_list(phys_str: str):
 #not whole output of numactl --show but physcpubind part of it.
 #for better understanding run numactl --show on google colab terminal y'll get it.
 
+def get_numa_cpus_and_memory():
+    """Run numactl --show and parse that CPU and memory information"""
+    out = subprocess.run(
+        ["numactl", "--show"],
+        capture_output=True, text=True
+    ).stdout
+
+    phys = re.search(r"physcpubind:\s*([\d,-]+)",out).group(1)
+    cpus = parse_physical_cpu_list(phys)
+
+    node = int(re.search(r"preferred node:\s*(\d+)"),out).group(1)
+    return cpus,node
+
+#if you read this simple code line it mentions subprocess.run which runs the command numactl --show - this is the actual fxn where we are giving instructions to run that command on  shell
+#capture_output = is just for capturing the output on the shell after running this command , text =  true so that output is captured in string
+#stdout is ensures that we get only the output string of the command we just ran
+#this module of code is pretty easy to run and try :)
+#rest part of the code is easily understandable as it searches for certain keyword here being physcpubind and preferred node nad returns it.
+
+
+def get_gpu_numa_node(device:int):
+    """"Determine Numa node for the GPU using its PCI bus ID"""
+    props = torch.cuda.get_device_properties(device)
+    pci = props.pci_bus_id
+    sysfs_path = f"/sys/bus/pci/devices/{pci}/numa_node"
+    try:
+        with open(sysfs_path,"r") as f:
+            return int(f.read().strip())
+    except FileNotFoundError:
+        #Falling back to the preferred node from numactl if the entry is missing
+        _, node = get_numa_cpus_and_memory()
+        return NotADirectoryError
+
+#
